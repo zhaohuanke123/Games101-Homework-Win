@@ -7,6 +7,34 @@
 
 constexpr double MY_PI = 3.1415926;
 
+constexpr float DegreeToRadian = MY_PI / 180;
+/**
+ * @param axis 过原点的旋转轴
+ * @param angle 旋转角度
+ * @return 过原点的任意轴旋转任意角度的齐次旋转矩阵
+ */
+Eigen::Matrix4f get_rotation(Vector3f axis, float angle) {
+    // 规一化旋转轴
+    axis = axis.normalized();
+    float alpha = angle * DegreeToRadian;
+
+    Matrix3f multFactor;
+    // 2. 计算叉乘矩阵
+    multFactor <<
+            0, -axis.z(), axis.y(),
+            axis.z(), 0, -axis.x(),
+            -axis.y(), axis.x(), 0;
+
+    // 3. 代入公式计算旋转矩阵
+    Matrix3f rotation = cos(alpha) * Matrix3f::Identity()
+                        + (1 - cos(alpha)) * axis * axis.transpose()
+                        + sin(alpha) * multFactor;
+    Matrix4f final = Matrix4f::Identity();
+
+    // 4. 转换为 齐次矩阵
+    final.block(0, 0, 3, 3) = rotation;
+    return final;
+}
 Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 {
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
@@ -25,6 +53,7 @@ Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 Eigen::Matrix4f get_model_matrix(float rotation_angle)
 {
     Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
+    model = get_rotation(Vector3f(1, 1, 0), rotation_angle);
     return model;
 }
 
@@ -32,6 +61,29 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float z
 {
     // TODO: Copy-paste your implementation from the previous assignment.
     Eigen::Matrix4f projection;
+ Matrix4f persp2ortho, ortho;
+
+    // 1. 计算从视锥体压缩到长方体的矩阵
+    float n = -zNear;
+    float f = -zFar;
+    persp2ortho <<
+            n, 0, 0, 0,
+            0, n, 0, 0,
+            0, 0, n + f, -n * f,
+            0, 0, 1, 0;
+
+    // 2. 计算长方体的各个参数
+    float theta = eye_fov * 0.5 * DegreeToRadian;
+    float height = zNear * tan(theta) * 2;
+    float width = height * aspect_ratio;
+    // 3. 计算长方体 压缩成 -1 1 的标准正方体
+    ortho <<
+            2 / width, 0, 0, 0,
+            0, 2 / height, 0, 0,
+            0, 0, 2 / (n - f), 0,
+            0, 0, 0, 1;
+
+    projection = ortho * persp2ortho * projection;
 
     return projection;
 }
