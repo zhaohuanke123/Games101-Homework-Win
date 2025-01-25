@@ -80,11 +80,12 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
     // Create the projection matrix for the given parameters.
     // Then return it.
 
-    Matrix4f persp2ortho, ortho;
+    projection = Eigen::Matrix4f::Identity();
+    Matrix4f persp2ortho, scale, translate;
 
     // 1. 计算从视锥体压缩到长方体的矩阵
-    float n = -zNear;
-    float f = -zFar;
+    float n = zNear;
+    float f = zFar;
     persp2ortho <<
             n, 0, 0, 0,
             0, n, 0, 0,
@@ -93,17 +94,23 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
 
     // 2. 计算长方体的各个参数
     float theta = eye_fov * 0.5 * DegreeToRadian;
-    float height = zNear * tan(theta) * 2;
+    float height = -zNear * tan(theta) * 2;
     float width = height * aspect_ratio;
-    // 3. 计算长方体 压缩成 -1 1 的标准正方体
-    ortho <<
+
+    // 3. 计算长方体 压缩成 -1 1 的标准正方体  平移 + 缩放
+    scale <<
             2 / width, 0, 0, 0,
             0, 2 / height, 0, 0,
             0, 0, 2 / (n - f), 0,
             0, 0, 0, 1;
+    translate <<
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, -(f + n) / (n - f),
+            0, 0, 0, 1;
+    Matrix4f ortho = scale * translate;
 
     projection = ortho * persp2ortho * projection;
-
     return projection;
 }
 

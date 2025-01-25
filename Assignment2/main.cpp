@@ -6,35 +6,8 @@
 #include "Triangle.hpp"
 
 constexpr double MY_PI = 3.1415926;
-
 constexpr float DegreeToRadian = MY_PI / 180;
-/**
- * @param axis 过原点的旋转轴
- * @param angle 旋转角度
- * @return 过原点的任意轴旋转任意角度的齐次旋转矩阵
- */
-Eigen::Matrix4f get_rotation(Vector3f axis, float angle) {
-    // 规一化旋转轴
-    axis = axis.normalized();
-    float alpha = angle * DegreeToRadian;
 
-    Matrix3f multFactor;
-    // 2. 计算叉乘矩阵
-    multFactor <<
-            0, -axis.z(), axis.y(),
-            axis.z(), 0, -axis.x(),
-            -axis.y(), axis.x(), 0;
-
-    // 3. 代入公式计算旋转矩阵
-    Matrix3f rotation = cos(alpha) * Matrix3f::Identity()
-                        + (1 - cos(alpha)) * axis * axis.transpose()
-                        + sin(alpha) * multFactor;
-    Matrix4f final = Matrix4f::Identity();
-
-    // 4. 转换为 齐次矩阵
-    final.block(0, 0, 3, 3) = rotation;
-    return final;
-}
 Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 {
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
@@ -53,19 +26,24 @@ Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 Eigen::Matrix4f get_model_matrix(float rotation_angle)
 {
     Eigen::Matrix4f model = Eigen::Matrix4f::Identity();
-    model = get_rotation(Vector3f(1, 1, 0), rotation_angle);
     return model;
 }
 
 Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar)
-{
-    // TODO: Copy-paste your implementation from the previous assignment.
-    Eigen::Matrix4f projection;
- Matrix4f persp2ortho, ortho;
+{  // Students will implement this function
+
+    Eigen::Matrix4f projection = Eigen::Matrix4f::Identity();
+
+    // TODO: Implement this function
+    // Create the projection matrix for the given parameters.
+    // Then return it.
+
+    projection = Eigen::Matrix4f::Identity();
+    Matrix4f persp2ortho, scale, translate;
 
     // 1. 计算从视锥体压缩到长方体的矩阵
-    float n = -zNear;
-    float f = -zFar;
+    float  n = zNear;
+    float f = zFar;
     persp2ortho <<
             n, 0, 0, 0,
             0, n, 0, 0,
@@ -74,17 +52,23 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float z
 
     // 2. 计算长方体的各个参数
     float theta = eye_fov * 0.5 * DegreeToRadian;
-    float height = zNear * tan(theta) * 2;
+    float height = -zNear * tan(theta) * 2;
     float width = height * aspect_ratio;
-    // 3. 计算长方体 压缩成 -1 1 的标准正方体
-    ortho <<
+
+    // 3. 计算长方体 压缩成 -1 1 的标准正方体  平移 + 缩放
+    scale <<
             2 / width, 0, 0, 0,
             0, 2 / height, 0, 0,
-            0, 0, 2 / (n - f), 0,
+            0, 0, 2 / (n - f),0,
             0, 0, 0, 1;
+    translate <<
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, -(f+n)/(n - f),
+            0, 0, 0, 1;
+    Matrix4f ortho = scale * translate;
 
     projection = ortho * persp2ortho * projection;
-
     return projection;
 }
 
@@ -112,13 +96,13 @@ int main(int argc, const char** argv)
                     {-2, 0, -2},
                     {3.5, -1, -5},
                     {2.5, 1.5, -5},
-                    {-1, 0.5, -5}
+                    {-1, 0.5, -5},
             };
 
     std::vector<Eigen::Vector3i> ind
             {
                     {0, 1, 2},
-                    {3, 4, 5}
+                    {3, 4, 5},
             };
 
     std::vector<Eigen::Vector3f> cols
@@ -128,7 +112,7 @@ int main(int argc, const char** argv)
                     {217.0, 238.0, 185.0},
                     {185.0, 217.0, 238.0},
                     {185.0, 217.0, 238.0},
-                    {185.0, 217.0, 238.0}
+                    {185.0, 217.0, 238.0},
             };
 
     auto pos_id = r.load_positions(pos);

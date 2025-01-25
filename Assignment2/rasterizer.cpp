@@ -39,10 +39,31 @@ auto to_vec4(const Eigen::Vector3f& v3, float w = 1.0f)
     return Vector4f(v3.x(), v3.y(), v3.z(), w);
 }
 
-
-static bool insideTriangle(int x, int y, const Vector3f* _v)
+/**
+ * @param x x坐标
+ * @param y y坐标
+ * @param _v 三角形3个顶点坐标，按逆时针存放
+ * @return 是否点在三角形内部
+ */
+static bool insideTriangle(float x, float y, const Vector3f* _v)
 {   
     // TODO : Implement this function to check if the point (x, y) is inside the triangle represented by _v[0], _v[1], _v[2]
+    const auto checkPos = Vector3f(x, y, 0.0f);
+    // 1. 按逆时针遍历，检查叉乘结果是否小于零。
+    for (int i = 0;i < 3;i++) {
+       Vector3f p1 = _v[i];
+       Vector3f p2 = _v[(i+1)%3];
+
+        Vector3f v1 = checkPos - p1;
+        Vector3f v2 = p2 - p1;
+
+       if (v1.x()*v2.y() - v2.x()*v1.y() > 0) {
+            return false;
+        }
+   }
+
+    //  1. 全部小于零，说明在三角形内
+    return true;
 }
 
 static std::tuple<float, float, float> computeBarycentric2D(float x, float y, const Vector3f* v)
@@ -98,24 +119,110 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
         t.setColor(1, col_y[0], col_y[1], col_y[2]);
         t.setColor(2, col_z[0], col_z[1], col_z[2]);
 
-        rasterize_triangle(t);
+        // rasterize_triangle(t);
+        rasterize_triangle_msaa(t);
     }
 }
 
 //Screen space rasterization
 void rst::rasterizer::rasterize_triangle(const Triangle& t) {
     auto v = t.toVector4();
-    
+
     // TODO : Find out the bounding box of current triangle.
     // iterate through the pixel and find if the current pixel is inside the triangle
-
     // If so, use the following code to get the interpolated z value.
     //auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
     //float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
     //float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
     //z_interpolated *= w_reciprocal;
-
     // TODO : set the current pixel (use the set_pixel function) to the color of the triangle (use getColor function) if it should be painted.
+
+    // 1. AABB的四个值
+    const int xMin = std::min({v[0].x(), v[1].x(), v[2].x()});
+    const int yMin = std::min({v[0].y(), v[1].y(), v[2].y()});
+    const int xMax = std::max({v[0].x(), v[1].x(), v[2].x()});
+    const int yMax = std::max({v[0].y(), v[1].y(), v[2].y()});
+
+    // 2. 遍历包围盒
+    for (int x = xMin; x <= xMax;x++) {
+        for (int y = yMin; y <= yMax;y++) {
+
+            if (!insideTriangle(x + 0.5f, y + 0.5f, t.v)) {
+                continue;
+            }
+
+            auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
+            float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+            float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+            z_interpolated *= w_reciprocal;
+
+            // 3. 计算深度值
+            int idx = get_index(x,y);
+            if (z_interpolated < depth_buf[idx]) {
+                depth_buf[idx] = z_interpolated;
+                Vector3f point = Vector3f(x ,y, 0);
+
+                // 4. 更新帧缓存
+                set_pixel(point, t.getColor());
+            }
+        }
+    }
+}
+
+/**
+ * mass
+ * @param t 三角形数据
+ */
+void rst::rasterizer::rasterize_triangle_msaa(const Triangle& t) {
+    auto v = t.toVector4();
+    // 1. AABB的四个值
+    const int xMin = std::min({v[0].x(), v[1].x(), v[2].x()});
+    const int yMin = std::min({v[0].y(), v[1].y(), v[2].y()});
+    const int xMax = std::max({v[0].x(), v[1].x(), v[2].x()});
+    const int yMax = std::max({v[0].y(), v[1].y(), v[2].y()});
+
+    // 2. 遍历包围盒
+    for (int x = xMin; x <= xMax;x++) {
+        for (int y = yMin; y <= yMax;y++) {
+
+            // 3. 用于检查是否有需要更新的子像素
+            bool fg = false;
+            Vector2f offset[4] = {{0.25f, 0.25f}, {0.75f, 0.25f}, {0.25f, 0.75f}, {0.75f, 0.75f}};
+
+            // 4. 遍历四个子像素
+            for (int i = 0; i < 4; i++) {
+                if (!insideTriangle(x + offset[i][0], y + offset[i][1], t.v)) {
+                    continue;
+                }
+
+                auto[alpha, beta, gamma] = computeBarycentric2D(x + offset[i][0], y + offset[i][1], t.v);
+                float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+                float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+                z_interpolated *= w_reciprocal;
+
+                int idx = get_super_index(x * 2 + i % 2, y * 2 + i / 2);
+
+                // 维护一个四倍大小的缓存，防止黑边问题
+                if (super_depth_buf[idx] > z_interpolated) {
+                    fg = true;
+                    super_depth_buf[idx] = z_interpolated;
+                    super_frame_buf[idx] = t.getColor();
+                }
+            }
+
+            // 5. 更新当前像素
+            if (fg) {
+                Vector3f point = Vector3f(x ,y, 0);
+                Vector3f color = Vector3f::Zero();
+                for (int i = 0; i < 4; i++) {
+                    int idx = get_super_index(x * 2 + i % 2, y * 2 + i / 2);
+                    color += super_frame_buf[idx];
+                }
+                color /= 4;
+                set_pixel(point, color);
+            }
+        }
+    }
 }
 
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
@@ -138,10 +245,12 @@ void rst::rasterizer::clear(rst::Buffers buff)
     if ((buff & rst::Buffers::Color) == rst::Buffers::Color)
     {
         std::fill(frame_buf.begin(), frame_buf.end(), Eigen::Vector3f{0, 0, 0});
+        std::fill(super_frame_buf.begin(), super_frame_buf.end(), Eigen::Vector3f{ 0, 0, 0 });
     }
     if ((buff & rst::Buffers::Depth) == rst::Buffers::Depth)
     {
         std::fill(depth_buf.begin(), depth_buf.end(), std::numeric_limits<float>::infinity());
+        std::fill(super_depth_buf.begin(), super_depth_buf.end(), std::numeric_limits<float>::infinity());
     }
 }
 
@@ -149,6 +258,13 @@ rst::rasterizer::rasterizer(int w, int h) : width(w), height(h)
 {
     frame_buf.resize(w * h);
     depth_buf.resize(w * h);
+    super_frame_buf.resize(w * h * 4);
+    super_depth_buf.resize(w * h * 4);
+}
+
+int rst::rasterizer::get_super_index(int x, int y)
+{
+    return (height*2 - 1 - y) * width*2 + x;
 }
 
 int rst::rasterizer::get_index(int x, int y)
