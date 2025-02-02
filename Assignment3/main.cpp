@@ -8,6 +8,8 @@
 #include "Texture.hpp"
 #include "OBJ_Loader.h"
 
+constexpr float DegreeToRadian = MY_PI / 180;
+
 Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
 {
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
@@ -52,6 +54,37 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float z
     // TODO: Use the same projection matrix from the previous assignments
 	Eigen::Matrix4f projection;
 
+    projection = Eigen::Matrix4f::Identity();
+    Matrix4f persp2ortho, scale, translate;
+
+    // 1. 计算从视锥体压缩到长方体的矩阵
+    float  n = zNear;
+    float f = zFar;
+    persp2ortho <<
+            n, 0, 0, 0,
+            0, n, 0, 0,
+            0, 0, n + f, -n * f,
+            0, 0, 1, 0;
+
+    // 2. 计算长方体的各个参数
+    float theta = eye_fov * 0.5 * DegreeToRadian;
+    float height = -zNear * tan(theta) * 2;
+    float width = height * aspect_ratio;
+
+    // 3. 计算长方体 压缩成 -1 1 的标准正方体  平移 + 缩放
+    scale <<
+            2 / width, 0, 0, 0,
+            0, 2 / height, 0, 0,
+            0, 0, 2 / (n - f),0,
+            0, 0, 0, 1;
+    translate <<
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, -(f+n)/(n - f),
+            0, 0, 0, 1;
+    Matrix4f ortho = scale * translate;
+
+    projection = ortho * persp2ortho * projection;
 	return projection;
 }
 
@@ -86,7 +119,7 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
     if (payload.texture)
     {
         // TODO: Get the texture value at the texture coordinates of the current fragment
-
+        return_color = payload.texture->getColor(payload.tex_coords.x(), payload.tex_coords.y());
     }
     Eigen::Vector3f texture_color;
     texture_color << return_color.x(), return_color.y(), return_color.z();
@@ -114,7 +147,23 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
     {
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
         // components are. Then, accumulate that result on the *result_color* object.
+        // 1. 计算光线方向，视角方向，半程向量
+        Vector3f l = (light.position - point).normalized();
+        Vector3f v = (eye_pos - point).normalized();
+        Vector3f h = (l + v).normalized();
+        // 2. 计算物体与光距离平方的倒数，直接乘快一点
+        float r2 = (light.position - point).dot(light.position - point);
+        float d_r2 = 1.0f / r2;
 
+        // 3. 环境光
+        Eigen::Vector3f ambient = ka.cwiseProduct(amb_light_intensity);
+        // 4. 漫反射
+        float ndotl = std::max(0.0f, normal.dot(l));
+        Eigen::Vector3f diffuse = kd.cwiseProduct(light.intensity * d_r2) * ndotl;
+        // 5. 高光反射
+        float ndoth = std::max(0.0f, normal.dot(h));
+        Eigen::Vector3f specular = ks.cwiseProduct(light.intensity * d_r2) * std::pow(ndoth, p);
+        result_color += ambient + diffuse + specular;
     }
 
     return result_color * 255.f;
@@ -144,17 +193,30 @@ Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
     {
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
         // components are. Then, accumulate that result on the *result_color* object.
-        
+        // 1. 计算光线方向，视角方向，半程向量
+        Vector3f l = (light.position - point).normalized();
+        Vector3f v = (eye_pos - point).normalized();
+        Vector3f h = (l + v).normalized();
+        // 2. 计算物体与光距离平方的倒数，直接乘快一点
+        float r2 = (light.position - point).dot(light.position - point);
+        float d_r2 = 1.0f / r2;
+
+        // 3. 环境光
+        Eigen::Vector3f ambient = ka.cwiseProduct(amb_light_intensity);
+        // 4. 漫反射
+        float ndotl = std::max(0.0f, normal.dot(l));
+        Eigen::Vector3f diffuse = kd.cwiseProduct(light.intensity * d_r2) * ndotl;
+        // 5. 高光反射
+        float ndoth = std::max(0.0f, normal.dot(h));
+        Eigen::Vector3f specular = ks.cwiseProduct(light.intensity * d_r2) * std::pow(ndoth, p);
+        result_color += ambient + diffuse + specular;
     }
 
     return result_color * 255.f;
 }
 
-
-
 Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payload)
 {
-    
     Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
@@ -184,16 +246,50 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
     // Vector ln = (-dU, -dV, 1)
     // Position p = p + kn * n * h(u,v)
     // Normal n = normalize(TBN * ln)
+    // 1. 计算切线向量
+    Vector3f t = Vector3f(normal.x() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
+                          sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
+                          normal.z() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()));
+    // 2. 计算副法线向量
+    Vector3f b = normal.cross(t);
+    // 3. 构建TBN矩阵
+    Matrix3f TBN;
+    TBN << t, b, normal;
+    // 4. 计算偏导数
+    float u = payload.tex_coords.x();
+    float v = payload.tex_coords.y();
+    float w = payload.texture->width;
+    float h = payload.texture->height;
+    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / w, v).norm() - payload.texture->getColor(u, v).norm());
+    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / h).norm() - payload.texture->getColor(u, v).norm());
+    // 5. 计算法线向量
+    Vector3f ln = Vector3f(-dU, -dV, 1);
+    normal = (TBN * ln).normalized();
 
-
+    point += kn * normal * payload.texture->getColor(u, v).norm();
     Eigen::Vector3f result_color = {0, 0, 0};
 
     for (auto& light : lights)
     {
         // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
         // components are. Then, accumulate that result on the *result_color* object.
+        // 1. 计算光线方向，视角方向，半程向量
+        Vector3f l = (light.position - point).normalized();
+        Vector3f v = (eye_pos - point).normalized();
+        Vector3f h = (l + v).normalized();
+        // 2. 计算物体与光距离平方的倒数，直接乘快一点
+        float r2 = (light.position - point).dot(light.position - point);
+        float d_r2 = 1.0f / r2;
 
-
+        // 3. 环境光
+        Eigen::Vector3f ambient = ka.cwiseProduct(amb_light_intensity);
+        // 4. 漫反射
+        float ndotl = std::max(0.0f, normal.dot(l));
+        Eigen::Vector3f diffuse = kd.cwiseProduct(light.intensity * d_r2) * ndotl;
+        // 5. 高光反射
+        float ndoth = std::max(0.0f, normal.dot(h));
+        Eigen::Vector3f specular = ks.cwiseProduct(light.intensity * d_r2) * std::pow(ndoth, p);
+        result_color += ambient + diffuse + specular;
     }
 
     return result_color * 255.f;
@@ -202,7 +298,6 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
 
 Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
 {
-    
     Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
@@ -232,7 +327,25 @@ Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
     // dV = kh * kn * (h(u,v+1/h)-h(u,v))
     // Vector ln = (-dU, -dV, 1)
     // Normal n = normalize(TBN * ln)
-
+    // 1. 计算切线向量
+    Vector3f t = Vector3f(normal.x() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
+                           sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
+                           normal.z() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()));
+    // 2. 计算副法线向量
+    Vector3f b = normal.cross(t);
+    // 3. 构建TBN矩阵
+    Matrix3f TBN;
+    TBN << t, b, normal;
+    // 4. 计算偏导数
+    float u = payload.tex_coords.x();
+    float v = payload.tex_coords.y();
+    float w = payload.texture->width;
+    float h = payload.texture->height;
+    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / w, v).norm() - payload.texture->getColor(u, v).norm());
+    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / h).norm() - payload.texture->getColor(u, v).norm());
+    // 5. 计算法线向量
+    Vector3f ln = Vector3f(-dU, -dV, 1);
+    normal = (TBN * ln).normalized();
 
     Eigen::Vector3f result_color = {0, 0, 0};
     result_color = normal;

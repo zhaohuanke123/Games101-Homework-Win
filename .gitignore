@@ -3,3 +3,4 @@ cmake-build-debug-visual-studio
 freetype
 .idea
 .vs
+/cmake-build-default-visual-studio

@@ -265,6 +265,49 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t, const std::array<Eig
     //    * Z is interpolated view space depth for the current pixel
     //    * zp is depth between zNear and zFar, used for z-buffer
 
+    auto v = t.toVector4();
+    // 1. AABB的四个值
+    const int xMin = std::min({v[0].x(), v[1].x(), v[2].x()});
+    const int yMin = std::min({v[0].y(), v[1].y(), v[2].y()});
+    const int xMax = std::max({v[0].x(), v[1].x(), v[2].x()});
+    const int yMax = std::max({v[0].y(), v[1].y(), v[2].y()});
+
+    // 2. 遍历包围盒
+    for (int x = xMin; x <= xMax;x++) {
+        for (int y = yMin; y <= yMax;y++) {
+
+            if (!insideTriangle(x + 0.5f, y + 0.5f, t.v)) {
+                continue;
+            }
+
+            // 3. 计算深度值
+            auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
+            float Z = 1.0f / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
+            float zp = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
+            zp *= Z;
+
+            // 5. 计算interpolated_color
+            auto interpolated_color = interpolate(alpha, beta, gamma, t.color[0], t.color[1], t.color[2], 1);
+            // 6. 计算interpolated_normal
+            auto interpolated_normal = interpolate(alpha, beta, gamma, t.normal[0], t.normal[1], t.normal[2], 1);
+            // 7. 计算interpolated_texcoords
+            auto interpolated_texcoords = interpolate(alpha, beta, gamma, t.tex_coords[0], t.tex_coords[1], t.tex_coords[2], 1);
+            // 8. 计算interpolated_shadingcoords
+            auto interpolated_shadingcoords = interpolate(alpha, beta, gamma, view_pos[0], view_pos[1], view_pos[2], 1);
+
+            // 9. 使用fragment_shader
+            fragment_shader_payload payload(interpolated_color, interpolated_normal.normalized(), interpolated_texcoords, texture ? &*texture : nullptr);
+            payload.view_pos = interpolated_shadingcoords;
+            auto pixel_color = fragment_shader(payload);
+
+            // 10. 更新深度缓存
+            int idx = get_index(x,y);
+            if (zp < depth_buf[idx]) {
+                depth_buf[idx] = zp;
+                set_pixel(Vector2i(x, y), pixel_color);
+            }
+        }
+    }
     // float Z = 1.0 / (alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
     // float zp = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
     // zp *= Z;
@@ -279,8 +322,6 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t, const std::array<Eig
     // Use: payload.view_pos = interpolated_shadingcoords;
     // Use: Instead of passing the triangle's color directly to the frame buffer, pass the color to the shaders first to get the final color;
     // Use: auto pixel_color = fragment_shader(payload);
-
- 
 }
 
 void rst::rasterizer::set_model(const Eigen::Matrix4f& m)
@@ -326,7 +367,7 @@ int rst::rasterizer::get_index(int x, int y)
 void rst::rasterizer::set_pixel(const Vector2i &point, const Eigen::Vector3f &color)
 {
     //old index: auto ind = point.y() + point.x() * width;
-    int ind = (height-point.y())*width + point.x();
+    int ind = (height-point.y()-1)*width + point.x();
     frame_buf[ind] = color;
 }
 
