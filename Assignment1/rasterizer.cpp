@@ -109,6 +109,7 @@ void rst::rasterizer::draw(rst::pos_buf_id pos_buffer, rst::ind_buf_id ind_buffe
     if (type != rst::Primitive::Triangle) {
         throw std::runtime_error("Drawing primitives other than triangle is not implemented yet!");
     }
+
     auto &buf = pos_buf[pos_buffer.pos_id];
     auto &ind = ind_buf[ind_buffer.ind_id];
 

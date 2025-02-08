@@ -10,35 +10,33 @@
 
 constexpr float DegreeToRadian = MY_PI / 180;
 
-Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos)
-{
+Eigen::Matrix4f get_view_matrix(Eigen::Vector3f eye_pos) {
     Eigen::Matrix4f view = Eigen::Matrix4f::Identity();
 
     Eigen::Matrix4f translate;
-    translate << 1,0,0,-eye_pos[0],
-                 0,1,0,-eye_pos[1],
-                 0,0,1,-eye_pos[2],
-                 0,0,0,1;
+    translate << 1, 0, 0, -eye_pos[0],
+            0, 1, 0, -eye_pos[1],
+            0, 0, 1, -eye_pos[2],
+            0, 0, 0, 1;
 
-    view = translate*view;
+    view = translate * view;
 
     return view;
 }
 
-Eigen::Matrix4f get_model_matrix(float angle)
-{
+Eigen::Matrix4f get_model_matrix(float angle) {
     Eigen::Matrix4f rotation;
     angle = angle * MY_PI / 180.f;
     rotation << cos(angle), 0, sin(angle), 0,
-                0, 1, 0, 0,
-                -sin(angle), 0, cos(angle), 0,
-                0, 0, 0, 1;
+            0, 1, 0, 0,
+            -sin(angle), 0, cos(angle), 0,
+            0, 0, 0, 1;
 
     Eigen::Matrix4f scale;
     scale << 2.5, 0, 0, 0,
-              0, 2.5, 0, 0,
-              0, 0, 2.5, 0,
-              0, 0, 0, 1;
+            0, 2.5, 0, 0,
+            0, 0, 2.5, 0,
+            0, 0, 0, 1;
 
     Eigen::Matrix4f translate;
     translate << 1, 0, 0, 0,
@@ -49,17 +47,16 @@ Eigen::Matrix4f get_model_matrix(float angle)
     return translate * rotation * scale;
 }
 
-Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar)
-{
+Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float zNear, float zFar) {
     // TODO: Use the same projection matrix from the previous assignments
-	Eigen::Matrix4f projection;
+    Eigen::Matrix4f projection;
 
     projection = Eigen::Matrix4f::Identity();
     Matrix4f persp2ortho, scale, translate;
 
     // 1. 计算从视锥体压缩到长方体的矩阵
-    float  n = zNear;
-    float f = zFar;
+    float n = -zNear;
+    float f = -zFar;
     persp2ortho <<
             n, 0, 0, 0,
             0, n, 0, 0,
@@ -68,58 +65,63 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio, float z
 
     // 2. 计算长方体的各个参数
     float theta = eye_fov * 0.5 * DegreeToRadian;
-    float height = -zNear * tan(theta) * 2;
+    float height = zNear * tan(theta) * 2;
     float width = height * aspect_ratio;
 
     // 3. 计算长方体 压缩成 -1 1 的标准正方体  平移 + 缩放
     scale <<
             2 / width, 0, 0, 0,
             0, 2 / height, 0, 0,
-            0, 0, 2 / (n - f),0,
+            0, 0, 2 / (n - f), 0,
             0, 0, 0, 1;
     translate <<
             1, 0, 0, 0,
             0, 1, 0, 0,
-            0, 0, 1, -(f+n)/(n - f),
+            0, 0, 1, -(f + n) / (n - f),
             0, 0, 0, 1;
+
     Matrix4f ortho = scale * translate;
 
-    projection = ortho * persp2ortho * projection;
-	return projection;
+    // 4. 三角形层叠关系和参考图不一致
+    // 乘上一个镜像翻转矩阵，确保在 NDC 空间中转换成了左手系， 参考了https://zhuanlan.zhihu.com/p/509902950
+    Matrix4f mirror = Matrix4f::Identity();
+    mirror <<
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, -1, 0,
+            0, 0, 0, 1;
+
+    projection = mirror * ortho * persp2ortho;
+    return projection;
 }
 
-Eigen::Vector3f vertex_shader(const vertex_shader_payload& payload)
-{
+Eigen::Vector3f vertex_shader(const vertex_shader_payload &payload) {
     return payload.position;
 }
 
-Eigen::Vector3f normal_fragment_shader(const fragment_shader_payload& payload)
-{
+Eigen::Vector3f normal_fragment_shader(const fragment_shader_payload &payload) {
     Eigen::Vector3f return_color = (payload.normal.head<3>().normalized() + Eigen::Vector3f(1.0f, 1.0f, 1.0f)) / 2.f;
     Eigen::Vector3f result;
     result << return_color.x() * 255, return_color.y() * 255, return_color.z() * 255;
     return result;
 }
 
-static Eigen::Vector3f reflect(const Eigen::Vector3f& vec, const Eigen::Vector3f& axis)
-{
+static Eigen::Vector3f reflect(const Eigen::Vector3f &vec, const Eigen::Vector3f &axis) {
     auto costheta = vec.dot(axis);
     return (2 * costheta * axis - vec).normalized();
 }
 
-struct light
-{
+struct light {
     Eigen::Vector3f position;
     Eigen::Vector3f intensity;
 };
 
-Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
-{
+Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload &payload) {
     Eigen::Vector3f return_color = {0, 0, 0};
-    if (payload.texture)
-    {
+    if (payload.texture) {
         // TODO: Get the texture value at the texture coordinates of the current fragment
-        return_color = payload.texture->getColor(payload.tex_coords.x(), payload.tex_coords.y());
+        // return_color = payload.texture->getColor(payload.tex_coords.x(), payload.tex_coords.y());
+        return_color = payload.texture->getColorBiilinear(payload.tex_coords.x(), payload.tex_coords.y());
     }
     Eigen::Vector3f texture_color;
     texture_color << return_color.x(), return_color.y(), return_color.z();
@@ -143,13 +145,14 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
 
     Eigen::Vector3f result_color = {0, 0, 0};
 
-    for (auto& light : lights)
-    {
-        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+    for (auto &light: lights) {
+        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular*
         // components are. Then, accumulate that result on the *result_color* object.
         // 1. 计算光线方向，视角方向，半程向量
         Vector3f l = (light.position - point).normalized();
-        Vector3f v = (eye_pos - point).normalized();
+        // 这里写法参考https://zhuanlan.zhihu.com/p/425153734
+        // 这里的point在之前的流程中变换到相机空间了，所以不需要使用 eye_pos - point
+        Vector3f v = (-point).normalized();
         Vector3f h = (l + v).normalized();
         // 2. 计算物体与光距离平方的倒数，直接乘快一点
         float r2 = (light.position - point).dot(light.position - point);
@@ -169,8 +172,7 @@ Eigen::Vector3f texture_fragment_shader(const fragment_shader_payload& payload)
     return result_color * 255.f;
 }
 
-Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
-{
+Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload &payload) {
     Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
@@ -189,13 +191,14 @@ Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
     Eigen::Vector3f normal = payload.normal;
 
     Eigen::Vector3f result_color = {0, 0, 0};
-    for (auto& light : lights)
-    {
-        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+    for (auto &light: lights) {
+        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular*
         // components are. Then, accumulate that result on the *result_color* object.
         // 1. 计算光线方向，视角方向，半程向量
         Vector3f l = (light.position - point).normalized();
-        Vector3f v = (eye_pos - point).normalized();
+        // 这里写法参考https://zhuanlan.zhihu.com/p/425153734
+        // 这里的point在之前的流程中变换到相机空间了，所以不需要使用 eye_pos - point
+        Vector3f v = (-point).normalized();
         Vector3f h = (l + v).normalized();
         // 2. 计算物体与光距离平方的倒数，直接乘快一点
         float r2 = (light.position - point).dot(light.position - point);
@@ -215,8 +218,7 @@ Eigen::Vector3f phong_fragment_shader(const fragment_shader_payload& payload)
     return result_color * 255.f;
 }
 
-Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payload)
-{
+Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload &payload) {
     Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
@@ -230,12 +232,12 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
 
     float p = 150;
 
-    Eigen::Vector3f color = payload.color; 
+    Eigen::Vector3f color = payload.color;
     Eigen::Vector3f point = payload.view_pos;
     Eigen::Vector3f normal = payload.normal;
 
     float kh = 0.2, kn = 0.1;
-    
+
     // TODO: Implement displacement mapping here
     // Let n = normal = (x, y, z)
     // Vector t = (x*y/sqrt(x*x+z*z),sqrt(x*x+z*z),z*y/sqrt(x*x+z*z))
@@ -247,35 +249,45 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
     // Position p = p + kn * n * h(u,v)
     // Normal n = normalize(TBN * ln)
     // 1. 计算切线向量
-    Vector3f t = Vector3f(normal.x() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
-                          sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
-                          normal.z() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()));
+    float x = normal.x();
+    float y = normal.y();
+    float z = normal.z();
+    Vector3f t = Vector3f(x * y / sqrt(x * x + z * z),
+                          sqrt(x * x + z * z),
+                          z * y / sqrt(x * x + z * z));
+
     // 2. 计算副法线向量
     Vector3f b = normal.cross(t);
     // 3. 构建TBN矩阵
     Matrix3f TBN;
     TBN << t, b, normal;
+
     // 4. 计算偏导数
     float u = payload.tex_coords.x();
     float v = payload.tex_coords.y();
-    float w = payload.texture->width;
-    float h = payload.texture->height;
-    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / w, v).norm() - payload.texture->getColor(u, v).norm());
-    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / h).norm() - payload.texture->getColor(u, v).norm());
-    // 5. 计算法线向量
+    float width = payload.texture->width;
+    float height = payload.texture->height;
+
+    float h = payload.texture->getColor(u, v).norm();
+
+    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / width, v).norm() - h);
+    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / height).norm() - h);
+    // 5. 计算法线向量，从切线空间转换到世界空间
     Vector3f ln = Vector3f(-dU, -dV, 1);
     normal = (TBN * ln).normalized();
 
+    // 6. 计算扰动后的顶点位置
     point += kn * normal * payload.texture->getColor(u, v).norm();
-    Eigen::Vector3f result_color = {0, 0, 0};
 
-    for (auto& light : lights)
-    {
-        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular* 
+    Eigen::Vector3f result_color = {0, 0, 0};
+    for (auto &light: lights) {
+        // TODO: For each light source in the code, calculate what the *ambient*, *diffuse*, and *specular*
         // components are. Then, accumulate that result on the *result_color* object.
         // 1. 计算光线方向，视角方向，半程向量
         Vector3f l = (light.position - point).normalized();
-        Vector3f v = (eye_pos - point).normalized();
+        // 这里写法参考https://zhuanlan.zhihu.com/p/425153734
+        // 这里的point在之前的流程中变换到相机空间了，所以不需要使用 eye_pos - point
+        Vector3f v = (-point).normalized();
         Vector3f h = (l + v).normalized();
         // 2. 计算物体与光距离平方的倒数，直接乘快一点
         float r2 = (light.position - point).dot(light.position - point);
@@ -295,9 +307,7 @@ Eigen::Vector3f displacement_fragment_shader(const fragment_shader_payload& payl
     return result_color * 255.f;
 }
 
-
-Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
-{
+Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload &payload) {
     Eigen::Vector3f ka = Eigen::Vector3f(0.005, 0.005, 0.005);
     Eigen::Vector3f kd = payload.color;
     Eigen::Vector3f ks = Eigen::Vector3f(0.7937, 0.7937, 0.7937);
@@ -311,7 +321,7 @@ Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
 
     float p = 150;
 
-    Eigen::Vector3f color = payload.color; 
+    Eigen::Vector3f color = payload.color;
     Eigen::Vector3f point = payload.view_pos;
     Eigen::Vector3f normal = payload.normal;
 
@@ -328,34 +338,42 @@ Eigen::Vector3f bump_fragment_shader(const fragment_shader_payload& payload)
     // Vector ln = (-dU, -dV, 1)
     // Normal n = normalize(TBN * ln)
     // 1. 计算切线向量
-    Vector3f t = Vector3f(normal.x() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
-                           sqrt(normal.x() * normal.x() + normal.z() * normal.z()),
-                           normal.z() * normal.y() / sqrt(normal.x() * normal.x() + normal.z() * normal.z()));
+    float x = normal.x();
+    float y = normal.y();
+    float z = normal.z();
+    Vector3f t = Vector3f(x * y / sqrt(x * x + z * z),
+                          sqrt(x * x + z * z),
+                          z * y / sqrt(x * x + z * z));
+
     // 2. 计算副法线向量
     Vector3f b = normal.cross(t);
     // 3. 构建TBN矩阵
     Matrix3f TBN;
     TBN << t, b, normal;
+
     // 4. 计算偏导数
     float u = payload.tex_coords.x();
     float v = payload.tex_coords.y();
-    float w = payload.texture->width;
-    float h = payload.texture->height;
-    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / w, v).norm() - payload.texture->getColor(u, v).norm());
-    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / h).norm() - payload.texture->getColor(u, v).norm());
-    // 5. 计算法线向量
+    float width = payload.texture->width;
+    float height = payload.texture->height;
+
+    float h = payload.texture->getColor(u, v).norm();
+
+    float dU = kh * kn * (payload.texture->getColor(u + 1.0f / width, v).norm() - h);
+    float dV = kh * kn * (payload.texture->getColor(u, v + 1.0f / height).norm() - h);
+    // 5. 计算法线向量，从切线空间转换到世界空间
     Vector3f ln = Vector3f(-dU, -dV, 1);
     normal = (TBN * ln).normalized();
 
+    // 6. 将法线作为颜色进行可视化
     Eigen::Vector3f result_color = {0, 0, 0};
     result_color = normal;
 
     return result_color * 255.f;
 }
 
-int main(int argc, const char** argv)
-{
-    std::vector<Triangle*> TriangleList;
+int main(int argc, const char **argv) {
+    std::vector<Triangle *> TriangleList;
 
     float angle = 140.0;
     bool command_line = false;
@@ -366,16 +384,20 @@ int main(int argc, const char** argv)
 
     // Load .obj File
     bool loadout = Loader.LoadFile("../models/spot/spot_triangulated_good.obj");
-    for(auto mesh:Loader.LoadedMeshes)
-    {
-        for(int i=0;i<mesh.Vertices.size();i+=3)
-        {
-            Triangle* t = new Triangle();
-            for(int j=0;j<3;j++)
-            {
-                t->setVertex(j,Vector4f(mesh.Vertices[i+j].Position.X,mesh.Vertices[i+j].Position.Y,mesh.Vertices[i+j].Position.Z,1.0));
-                t->setNormal(j,Vector3f(mesh.Vertices[i+j].Normal.X,mesh.Vertices[i+j].Normal.Y,mesh.Vertices[i+j].Normal.Z));
-                t->setTexCoord(j,Vector2f(mesh.Vertices[i+j].TextureCoordinate.X, mesh.Vertices[i+j].TextureCoordinate.Y));
+    // loadout = Loader.LoadFile("../models/bunny/bunny.obj");
+    // bool loadout = Loader.LoadFile("../models/Crate/Crate1.obj");
+    // bool loadout = Loader.LoadFile("../models/rock/rock.obj");
+    for (auto mesh: Loader.LoadedMeshes) {
+        for (int i = 0; i < mesh.Vertices.size(); i += 3) {
+            Triangle *t = new Triangle();
+
+            for (int j = 0; j < 3; j++) {
+                t->setVertex(j, Vector4f(mesh.Vertices[i + j].Position.X, mesh.Vertices[i + j].Position.Y,
+                                         mesh.Vertices[i + j].Position.Z, 1.0));
+                t->setNormal(j, Vector3f(mesh.Vertices[i + j].Normal.X, mesh.Vertices[i + j].Normal.Y,
+                                         mesh.Vertices[i + j].Normal.Z));
+                t->setTexCoord(j, Vector2f(mesh.Vertices[i + j].TextureCoordinate.X,
+                                           mesh.Vertices[i + j].TextureCoordinate.Y));
             }
             TriangleList.push_back(t);
         }
@@ -388,41 +410,31 @@ int main(int argc, const char** argv)
 
     std::function<Eigen::Vector3f(fragment_shader_payload)> active_shader = phong_fragment_shader;
 
-    if (argc >= 2)
-    {
+    if (argc >= 2) {
         command_line = true;
         filename = std::string(argv[1]);
 
-        if (argc == 3 && std::string(argv[2]) == "texture")
-        {
+        if (argc == 3 && std::string(argv[2]) == "texture") {
             std::cout << "Rasterizing using the texture shader\n";
             active_shader = texture_fragment_shader;
             texture_path = "spot_texture.png";
             r.set_texture(Texture(obj_path + texture_path));
-        }
-        else if (argc == 3 && std::string(argv[2]) == "normal")
-        {
+        } else if (argc == 3 && std::string(argv[2]) == "normal") {
             std::cout << "Rasterizing using the normal shader\n";
             active_shader = normal_fragment_shader;
-        }
-        else if (argc == 3 && std::string(argv[2]) == "phong")
-        {
+        } else if (argc == 3 && std::string(argv[2]) == "phong") {
             std::cout << "Rasterizing using the phong shader\n";
             active_shader = phong_fragment_shader;
-        }
-        else if (argc == 3 && std::string(argv[2]) == "bump")
-        {
+        } else if (argc == 3 && std::string(argv[2]) == "bump") {
             std::cout << "Rasterizing using the bump shader\n";
             active_shader = bump_fragment_shader;
-        }
-        else if (argc == 3 && std::string(argv[2]) == "displacement")
-        {
+        } else if (argc == 3 && std::string(argv[2]) == "displacement") {
             std::cout << "Rasterizing using the bump shader\n";
             active_shader = displacement_fragment_shader;
         }
     }
 
-    Eigen::Vector3f eye_pos = {0,0,10};
+    Eigen::Vector3f eye_pos = {0, 0, 10};
 
     r.set_vertex_shader(vertex_shader);
     r.set_fragment_shader(active_shader);
@@ -430,8 +442,7 @@ int main(int argc, const char** argv)
     int key = 0;
     int frame_count = 0;
 
-    if (command_line)
-    {
+    if (command_line) {
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
         r.set_model(get_model_matrix(angle));
         r.set_view(get_view_matrix(eye_pos));
@@ -447,8 +458,7 @@ int main(int argc, const char** argv)
         return 0;
     }
 
-    while(key != 27)
-    {
+    while (key != 27) {
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
         r.set_model(get_model_matrix(angle));
@@ -465,15 +475,11 @@ int main(int argc, const char** argv)
         cv::imwrite(filename, image);
         key = cv::waitKey(10);
 
-        if (key == 'a' )
-        {
+        if (key == 'a') {
             angle -= 0.1;
-        }
-        else if (key == 'd')
-        {
+        } else if (key == 'd') {
             angle += 0.1;
         }
-
     }
     return 0;
 }

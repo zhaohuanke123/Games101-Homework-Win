@@ -84,8 +84,8 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
     Matrix4f persp2ortho, scale, translate;
 
     // 1. 计算从视锥体压缩到长方体的矩阵
-    float n = zNear;
-    float f = zFar;
+    float n = -zNear;
+    float f = -zFar;
     persp2ortho <<
             n, 0, 0, 0,
             0, n, 0, 0,
@@ -94,7 +94,7 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
 
     // 2. 计算长方体的各个参数
     float theta = eye_fov * 0.5 * DegreeToRadian;
-    float height = -zNear * tan(theta) * 2;
+    float height = zNear * tan(theta) * 2;
     float width = height * aspect_ratio;
 
     // 3. 计算长方体 压缩成 -1 1 的标准正方体  平移 + 缩放
@@ -108,9 +108,10 @@ Eigen::Matrix4f get_projection_matrix(float eye_fov, float aspect_ratio,
             0, 1, 0, 0,
             0, 0, 1, -(f + n) / (n - f),
             0, 0, 0, 1;
-    Matrix4f ortho = scale * translate;
 
-    projection = ortho * persp2ortho * projection;
+    Matrix4f ortho = scale * translate;
+    projection = ortho * persp2ortho;
+
     return projection;
 }
 
@@ -132,19 +133,24 @@ int main(int argc, const char **argv) {
 
     Eigen::Vector3f eye_pos = {0, 0, 5};
 
+    // 点集合
     std::vector<Eigen::Vector3f> pos{{2, 0, -2}, {0, 2, -2}, {-2, 0, -2}};
 
+    // 索引集合
     std::vector<Eigen::Vector3i> ind{{0, 1, 2}};
 
     auto pos_id = r.load_positions(pos);
     auto ind_id = r.load_indices(ind);
 
+    // 输入的按键key
     int key = 0;
+    // 当前渲染了多少帧
     int frame_count = 0;
 
     if (command_line) {
         r.clear(rst::Buffers::Color | rst::Buffers::Depth);
 
+        // 设置MVP矩阵
         r.set_model(get_model_matrix(angle));
         r.set_view(get_view_matrix(eye_pos));
         r.set_projection(get_projection_matrix(45, 1, 0.1, 50));

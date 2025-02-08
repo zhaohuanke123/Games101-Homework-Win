@@ -94,7 +94,9 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
         };
         //Homogeneous division
         for (auto& vec : v) {
-            vec /= vec.w();
+            vec.x() /= vec.w();
+            vec.y() /= vec.w();
+            vec.z() /= vec.w();
         }
         //Viewport transformation
         for (auto & vert : v)
@@ -119,8 +121,8 @@ void rst::rasterizer::draw(pos_buf_id pos_buffer, ind_buf_id ind_buffer, col_buf
         t.setColor(1, col_y[0], col_y[1], col_y[2]);
         t.setColor(2, col_z[0], col_z[1], col_z[2]);
 
-        // rasterize_triangle(t);
-        rasterize_triangle_msaa(t);
+        rasterize_triangle(t);
+        // rasterize_triangle_msaa(t);
     }
 }
 
@@ -151,12 +153,12 @@ void rst::rasterizer::rasterize_triangle(const Triangle& t) {
                 continue;
             }
 
+            // 3. 计算深度值
             auto[alpha, beta, gamma] = computeBarycentric2D(x, y, t.v);
             float w_reciprocal = 1.0/(alpha / v[0].w() + beta / v[1].w() + gamma / v[2].w());
             float z_interpolated = alpha * v[0].z() / v[0].w() + beta * v[1].z() / v[1].w() + gamma * v[2].z() / v[2].w();
             z_interpolated *= w_reciprocal;
 
-            // 3. 计算深度值
             int idx = get_index(x,y);
             if (z_interpolated < depth_buf[idx]) {
                 depth_buf[idx] = z_interpolated;
